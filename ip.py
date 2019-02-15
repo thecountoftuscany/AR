@@ -8,6 +8,7 @@ class AR:
         self.cap = cv2.VideoCapture(src)
         self.scaleFactor = 0.9
         self.blur = 10
+        self.blackThresh = 150
 
     def ImgPreprocess(self, image):
         frame = cv2.resize(image, (0,0), fx=self.scaleFactor, fy=self.scaleFactor) 
@@ -15,6 +16,12 @@ class AR:
             frame = cv2.flip(image, 1)
 
         return frame
+
+    def reverseThreshold(self, fblur):
+        gray = cv2.cvtColor(fblur, cv2.COLOR_BGR2GRAY)
+        ret,dst = cv2.threshold(gray, self.blackThresh ,255,cv2.THRESH_BINARY)
+        dst = cv2.bitwise_not(dst)
+        return dst
 
     def quit(self):
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -83,31 +90,33 @@ class AR:
 
         while True:
             ret, frame = self.cap.read()
-            frame = self.ImgPreprocess(frame)
+            frame = self.ImgPreprocess(frame) ; img2 = frame.copy()
             fblur = cv2.blur(frame,(self.blur,self.blur)) 
             
-            # Grayscale thresh
-            gray = cv2.cvtColor(fblur, cv2.COLOR_BGR2GRAY)
-            ret,dst = cv2.threshold(gray,127,255,cv2.THRESH_BINARY)
-            dst = cv2.bitwise_not(dst)
+            # ****** Threshold based on brightness
+            dst = self.reverseThreshold(fblur)
 
-            # Camshift tracking
+            # ****** Track using Camshift algo
             ret, track_window = cv2.CamShift(dst, track_window, term_crit)
-            # Draw tracking window
-            pts = cv2.boxPoints(ret) ; pts = np.int0(pts)
-            img2 = frame.copy()
-            # img2 = cv2.polylines(frame,[pts],True, 255,2)
-            # Draw bounding box in green
+
+            # ****** Draw bounding box from Camshift output
+            pts = np.int0(cv2.boxPoints(ret))
             bb = self.boundingBox(pts)
             cv2.rectangle(img2, (bb[0],bb[1]), (bb[2],bb[3]), (0,255,0), 2)
-            # Largest contour inside bounding box
-            success, fourPt, box = self.sqCoords( dst[bb[1]:bb[3], bb[0]:bb[2] ] )
 
-            if success and fourPt.shape[0] == 4:
-                box[:, 0] += bb[0] ; box[:, 1] += bb[1] 
-                cv2.drawContours(img2,[box],0,(255,0,0),2) # Min Area rect
+            # ****** Detect largest contour inside bounding box, return coords of 4 vertices
+            success, fourPt, _ = self.sqCoords( dst[bb[1]:bb[3], bb[0]:bb[2] ] )
+
+            if success and fourPt.shape[0] == 4: # If contour with 4 pts is detected
                 fourPt[:,0,0] += bb[0] ; fourPt[:,0,1] += bb[1]
-                cv2.drawContours(img2 , [fourPt], -1, (0, 0, 255), 2) # Approximated contour with 4 vertices
+                cv2.drawContours(img2 , [fourPt], -1, (0, 0, 255), 2) # draw approx contour with 4 vertices
+                # Write text (labels) on vertices
+                for i in range(4): cv2.putText(img2,str(i),(fourPt[i,0,0],fourPt[i,0,1]), cv2.FONT_HERSHEY_SIMPLEX, 0.5,(0,255,255),1,cv2.LINE_AA)
+                # Get centroid co-ords and label it
+                origin = self.getOrigin( fourPt )
+                if origin[0] != -1: cv2.circle(img2,origin, 2, (0,0,255), -1)
+                # Get X,Y orientation and gridlines (Inaccurate)
+                X,Y = self.getXY(fourPt) ; cv2.line(img2, origin, X, (255,255,0), 1) ; cv2.line(img2, origin, Y, (255,255,0), 1)
 
             self.show([img2,dst])
 
@@ -136,10 +145,45 @@ class AR:
             return 1, approx, box
         except:
             return 0, None, None
+    
+    def getOrigin(self, f):
+        # Intersection point of diagonals
+        try:
+            tx = f[:,0,0].tolist() ; ty = f[:,0,1].tolist() 
+            x = [ tx[0], tx[2],tx[1],tx[3] ] ; y = [ ty[0], ty[2],ty[1],ty[3] ] 
+            m0 = ( y[1] - y[0] )/( x[1] - x[0] ) ; m2 = ( y[3] - y[2] )/( x[3] - x[2] )
+            X = ( (y[2] - y[0]) - ( m2*x[2] - m0*x[0] ) ) / ( m0 - m2 ) 
+            Y = m0*( X - x[0] ) + y[0]
+            return ( int(X), int(Y) ) 
+        except:
+            return (-1, -1)
+
+    def getXY(self,f):
+        # This method is not correct actually as perspective not taken into account
+        tx = f[:,0,0].tolist() ; ty = f[:,0,1].tolist()
+        a = np.argsort(tx) 
+        m,n = a[-1] , a[-2] # m is index of p1, n of p2 and k of p3
+        p1 = (tx[m], ty[m] ) ; p2 = (tx[n], ty[n] ) 
+
+        if n == 0 and m == 1: k = 3
+        elif n == 0 and m == 3: k = 1
+        elif n == 1 and m == 2: k = 0
+        elif n == 1 and m == 0: k = 2
+        elif n == 2 and m == 3: k = 1
+        elif n == 2 and m == 1: k = 3
+        elif n == 3 and m == 0: k = 2
+        elif n == 3 and m == 2: k = 0
+        
+        p3 = (tx[k], ty[k] ) 
+
+        X = ( int((p1[0] + p2[0])/2) , int((p1[1] + p2[1])/2) )
+        Y = ( int((p2[0] + p3[0])/2) , int((p2[1] + p3[1])/2) )
+        
+        return X,Y
 
 
 if __name__ == '__main__':
-    a = AR(src="http://192.168.1.6:8080/video", scale=1.0)
+    a = AR(src="http://192.168.43.1:8080/video", scale=1.0)
     # a = AR()
     a.startDetection()
     a.close()
