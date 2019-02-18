@@ -42,7 +42,7 @@ class AR:
                     threeChannelImg = cv2.merge((scaledImgs[i], scaledImgs[i], scaledImgs[i] ))
                     compositeImage = np.hstack((compositeImage,threeChannelImg))
                 else:
-                    compositeImage = np.hstack((final,scaledImgs[i]))
+                    compositeImage = np.hstack((compositeImage,scaledImgs[i]))
             cv2.imshow(windowTitle,compositeImage)
 
     def getTrackingBlob(self):
@@ -58,7 +58,7 @@ class AR:
             if flag == 0:
                 imageRows, imageCols, imageCh = image.shape
                 detectionCenter_x = imageCols/2 ; detectionCenter_y = imageRows/2
-                detectionH = 300 ; detectionW = 300
+                detectionH = 30 ; detectionW = 30
                 flag = 1
 
             # Detection box top left corner
@@ -124,10 +124,40 @@ class AR:
                 # Get centroid co-ords and label it
                 centroid = self.getCentroid( detectedVertices )
                 if centroid[0] != -1: cv2.circle(drawnImage ,centroid, 5, (0,0,255), -1)
+                # Get reference vertex
+                RefVert, indexOfRefVert = self.getRefVertex(detectedVertices, centroid, maskedImage)
+                cv2.circle(drawnImage ,(RefVert[0], RefVert[1]), 10, (0,255,0), -1)
+
+
 
             self.show([drawnImage ,maskedImage], "Square detection")
 
             if self.quit(): break
+
+    def getRefVertex(self, detectedVertices, centroid, maskedImage):
+        # Divide sq in 4 quadrants. Find the one which has least no of white pixels. Return corresponding vertex
+        vertices = detectedVertices[:,0,:]
+        # Divide square in 4 parts
+        imgArray = []
+        for i in range(4):
+            pPrev, pCurrent, pNext = vertices[i-2,:], vertices[i-1, :], vertices[i, :] 
+            midpointPC = [ (pPrev[0]+pCurrent[0])/2, (pPrev[1]+pCurrent[1])/2  ]
+            midpointCN = [ (pNext[0]+pCurrent[0])/2, (pNext[1]+pCurrent[1])/2  ]
+            ptsOriginal = np.float32([ [centroid[0], centroid[1]], midpointPC, pCurrent, midpointCN ])
+            ptsNew = np.float32([[0,0],[300,0],[300,300],[0,300]])
+            M = cv2.getPerspectiveTransform(ptsOriginal,ptsNew)
+            straightImage = cv2.warpPerspective(maskedImage,M,(300,300))
+            imgArray.append(straightImage)
+        
+        indexOfDotImage = np.argmin([ np.count_nonzero(straightImage) for straightImage in imgArray])
+
+        # I = imgArray[0]
+        # for i in np.arange(1,4):
+        #     I = np.hstack((I,imgArray[i]))
+        
+        # cv2.imshow("lol",I)
+
+        return vertices[indexOfDotImage-1, :], indexOfDotImage-1 # Actual vertex, index of that vertex in Vertex array
 
     def close(self):
         self.cap.release()
@@ -168,6 +198,6 @@ class AR:
 if __name__ == '__main__':
     with open(".camIP","r") as camIPFile:
         cameraIP = camIPFile.read()
-    a = AR(src="http://" + str(cameraIP) + ":8080/video", scale=0.3)
+    a = AR(src="http://" + str(cameraIP) + ":8080/video", scale=0.9)
     a.startDetection()
     a.close()
