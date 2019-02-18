@@ -169,7 +169,7 @@ class AR:
         return x1,y1,x2,y2
 
     def sqCoords(self,subImage):
-        # findContours() has 3 return values in openCV 2.x and 2 values after 3.x
+        # findContours() has 3 return values in openCV 3.x and 2 values after 4
         if int(cv2.__version__[0]) > 3:
             contours, _ = cv2.findContours(subImage, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
         else:
