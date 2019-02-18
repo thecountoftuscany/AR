@@ -124,17 +124,17 @@ class AR:
                 # Get centroid co-ords and label it
                 centroid = self.getCentroid( detectedVertices )
                 if centroid[0] != -1: cv2.circle(drawnImage ,centroid, 5, (0,0,255), -1)
-                # Get reference vertex
-                RefVert, indexOfRefVert = self.getRefVertex(detectedVertices, centroid, maskedImage)
-                cv2.circle(drawnImage ,(RefVert[0], RefVert[1]), 10, (0,255,0), -1)
-
+                # Get ordered vertices starting from Ref Vertex and clockwise
+                orderedVertices = self.correctVertexOrder(detectedVertices, centroid, maskedImage)
+                cv2.circle(drawnImage ,orderedVertices[0], 10, (0,255,0), -1)
 
 
             self.show([drawnImage ,maskedImage], "Square detection")
 
             if self.quit(): break
 
-    def getRefVertex(self, detectedVertices, centroid, maskedImage):
+    def correctVertexOrder(self, detectedVertices, centroid, maskedImage):
+        # First detect the reference vertex
         # Divide sq in 4 quadrants. Find the one which has least no of white pixels. Return corresponding vertex
         vertices = detectedVertices[:,0,:]
         # Divide square in 4 parts
@@ -150,14 +150,41 @@ class AR:
             imgArray.append(straightImage)
         
         indexOfDotImage = np.argmin([ np.count_nonzero(straightImage) for straightImage in imgArray])
-
-        # I = imgArray[0]
-        # for i in np.arange(1,4):
-        #     I = np.hstack((I,imgArray[i]))
+        i = indexOfDotImage - 1 # Index of Reference vertex
         
-        # cv2.imshow("lol",I)
+        # Ordering should be clockwise
+        if i == 0:
+            if self.isClockWise(centroid, vertices[0,:], vertices[1,:] ):
+                order = [0,1,2,3]
+            else:
+                order = [0,3,2,1]
+        elif i == 1:
+            if self.isClockWise(centroid, vertices[1,:], vertices[2,:] ):
+                order = [1,2,3,0]
+            else:
+                order = [1,0,3,2]
+        elif i == 2:
+            if self.isClockWise(centroid, vertices[2,:], vertices[3,:] ):
+                order = [2,3,0,1]
+            else:
+                order = [2,1,0,3]
+        elif i == 3 or i == -1:
+            if self.isClockWise(centroid, vertices[3,:], vertices[0,:] ):
+                order = [3,0,1,2]
+            else:
+                order = [3,2,1,0]
 
-        return vertices[indexOfDotImage-1, :], indexOfDotImage-1 # Actual vertex, index of that vertex in Vertex array
+        # Vertices in clockwise order starting from Reference Vertex
+        orderedVertices = [ (vertices[i,0], vertices[i,1] ) for i in order ]
+        
+        return orderedVertices
+
+    def isClockWise(self,o,m,n):
+        OA = [m[0] - o[0], m[1] - o[1], 0 ]
+        OB = [n[0] - o[0], n[1] - o[1], 0 ]
+
+        Z = np.cross(OA,OB)
+        return Z[2] < 0
 
     def close(self):
         self.cap.release()
@@ -169,7 +196,7 @@ class AR:
         return x1,y1,x2,y2
 
     def sqCoords(self,subImage):
-        # findContours() has 3 return values in openCV 3.x and 2 values after 4
+        # findContours() has 3 return values in openCV 2.x and 2 values after 3.x
         if int(cv2.__version__[0]) > 3:
             contours, _ = cv2.findContours(subImage, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
         else:
