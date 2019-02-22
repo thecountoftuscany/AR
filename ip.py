@@ -1,6 +1,6 @@
 #!python3
 import numpy as np
-import cv2
+import cv2, pickle
 
 class AR:
     def __init__(self, src=0, scale=0.9):
@@ -8,7 +8,15 @@ class AR:
         self.cap = cv2.VideoCapture(src)
         self.scaleFactor = scale # Only used while drawing image on screen
         self.blur = 10
-        self.blackThresh = 150
+        self.blackThresh = 100
+
+        # Load camera propeties
+        ret, self.CameraIntrinsic, self.distortions, self.CameraRot, self.CameraTrans = pickle.load( open( "camera.p", "rb" ) )
+
+        # Smoothen coordinates
+        self.nframes = 3
+        self.prevFrames = np.zeros((self.nframes,4,2))
+        self.framecount = 0
 
     def reverseThresholdImage(self, image):
         grayscaleImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -90,6 +98,7 @@ class AR:
         trackWindow = self.getTrackingBlob() # Track the blob in this window
 
         while True:
+            self.framecount += 1
             _, image = self.cap.read()
             drawnImage = image.copy()
             blurredImage = cv2.blur(image,(self.blur,self.blur))
@@ -114,7 +123,7 @@ class AR:
                 squareX=[-1,-1,-1,-1]; squareY=[-1,-1,-1,-1]
 
             # Print coordinates of detected square
-            print([squareX[0],squareY[0]], [squareX[1],squareY[1]], [squareX[2],squareY[2]], [squareX[3],squareY[3]])
+            # print([squareX[0],squareY[0]], [squareX[1],squareY[1]], [squareX[2],squareY[2]], [squareX[3],squareY[3]])
 
             # If contour with 4 pts is detected
             if success and detectedVertices.shape[0] == 4:
@@ -123,15 +132,55 @@ class AR:
                 cv2.drawContours(drawnImage , [detectedVertices], -1, (0, 0, 255), 5)
                 # Get centroid co-ords and label it
                 centroid = self.getCentroid( detectedVertices )
-                if centroid[0] != -1: cv2.circle(drawnImage ,centroid, 5, (0,0,255), -1)
+                if centroid[0] != -1: cv2.circle(drawnImage ,centroid, 5, (0,255,255), -1)
                 # Get ordered vertices starting from Ref Vertex and clockwise
                 orderedVertices = self.correctVertexOrder(detectedVertices, centroid, maskedImage)
-                cv2.circle(drawnImage ,orderedVertices[0], 10, (0,255,0), -1)
+                cv2.circle(drawnImage ,orderedVertices[0], 10, (255,255,0), -1)
+                # Draw co-ordinate axes on the plane
+                smoothVertices = self.smoothenCoords(orderedVertices)
+                drawnImage = self.drawAxes(drawnImage, smoothVertices)
 
 
             self.show([drawnImage ,maskedImage], "Square detection")
 
             if self.quit(): break
+
+    def smoothenCoords(self, orderedVertices):
+        # SHift all frames
+        for i in range(self.nframes -1) : self.prevFrames[i,:,:] = self.prevFrames[i+1,:,:]
+        # Add latest frame
+        for i in range(4): 
+            self.prevFrames[self.nframes -1, i, 0 ] = orderedVertices[i][0]
+            self.prevFrames[self.nframes -1, i, 1 ] = orderedVertices[i][1]
+        
+        if self.framecount < self.nframes :
+            return orderedVertices
+        else:
+            av = np.average(self.prevFrames, axis=0)
+            return [(av[i,0], av[i,1]) for i in range(4)]
+
+    def drawAxes(self, image, imageCorners):
+        try:
+            # Coordinates in the image
+            pointsImage = np.zeros((4,1,2))
+            for i in range(4) : pointsImage[i,0,0] = imageCorners[i][0] ; pointsImage[i,0,1] = imageCorners[i][1]
+            # Coordinates in world system
+            pointsWorld = np.array([[1,1,0], [-1,1,0], [-1,-1,0], [1,-1,0]], np.float32)
+            # Update Camera Extrinsic Parameters
+            _, self.CameraRot, self.CameraTrans, inliers = cv2.solvePnPRansac(pointsWorld, pointsImage, self.CameraIntrinsic, self.distortions)
+            print("a",self.CameraRot,"b", self.CameraTrans)
+            # Points to be converted from world to image
+            shapePointsWorld = np.float32([[0,0,0], [1,0,0], [0,1,0], [0,0,1], [1,0,1], [1,1,0], [0,1,1], [1,1,1]]).reshape(-1,3)
+            shapePointsImg, jac = cv2.projectPoints(shapePointsWorld, self.CameraRot, self.CameraTrans, self.CameraIntrinsic, self.distortions)
+            self.CameraRot, self.CameraTrans = np.around(self.CameraRot, decimals=2), np.around(self.CameraTrans, decimals=2)
+            # Draw on the image
+            toDraw = [(0,1), (0,2), (0,3), (4,3), (4,1), (1,5), (5,2), (3,6), (6,2), (4,7), (6,7), (5,7)]
+            # toDraw = [(0,1), (0,2), (0,3)]
+            for i,j in toDraw: cv2.line(image, ((shapePointsImg[i,0,0] , shapePointsImg[i,0,1])), ((shapePointsImg[j,0,0] , shapePointsImg[j,0,1])), (0,255,0), 5)
+
+            return image
+        except:
+            return image
 
     def correctVertexOrder(self, detectedVertices, centroid, maskedImage):
         # First detect the reference vertex
@@ -225,6 +274,7 @@ class AR:
 if __name__ == '__main__':
     with open(".camIP","r") as camIPFile:
         cameraIP = camIPFile.read()
-    a = AR(src="http://" + str(cameraIP) + ":8080/video", scale=0.9)
+    # a = AR(src="http://" + str(cameraIP) + ":8080/video", scale=0.9)
+    a = AR(src=0, scale=0.9)
     a.startDetection()
     a.close()
