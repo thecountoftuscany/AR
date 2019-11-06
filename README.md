@@ -1,7 +1,7 @@
 # AR demo
 This is a demo of a simple augmented reality application using image processing. The aim of this project is purely educational. 
 
-![alt-text](./resources/ardemo.gif)
+![Demo](./resources/ardemo.gif)
 
 Dependencies: `numpy`, `cv2`, `pickle`
 
